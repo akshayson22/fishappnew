@@ -285,7 +285,6 @@ body {
   height: 100%;
   object-fit: cover;
   border-radius: 8px;
-  transform: scaleX(-1);
 }
 
 .images-row {
