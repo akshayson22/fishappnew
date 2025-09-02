@@ -9,8 +9,6 @@ import numpy as np
 from fpdf import FPDF
 from scipy import ndimage
 from flask import Flask, render_template, request, jsonify, send_file
-from werkzeug.utils import secure_filename
-from io import BytesIO
 
 app = Flask(__name__)
 app.secret_key = 'fish_freshness_analyzer_secret_key'
@@ -19,14 +17,6 @@ app.secret_key = 'fish_freshness_analyzer_secret_key'
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Flask app configuration
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp')
-app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
-
-# Create upload directory if it doesn't exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-
 # Constants from the original code
 PRIMARY_COLOR = '#1a2b3c'
 SECONDARY_COLOR = '#0d1a26'
@@ -34,56 +24,6 @@ ACCENT_COLOR = '#3498db'
 SUCCESS_COLOR = '#27ae60'
 WARNING_COLOR = '#ff5555'
 TEXT_COLOR = '#ffffff'
-
-# ------------------------- Utility Functions -------------------------
-
-def validate_image_b64(b64_string):
-    """Validate base64 image string"""
-    try:
-        if not b64_string or ',' not in b64_string:
-            return False
-        header, enc = b64_string.split(',', 1)
-        imgdata = base64.b64decode(enc)
-        # Try to decode the image
-        arr = np.frombuffer(imgdata, np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        return img is not None and img.size > 0
-    except Exception:
-        return False
-
-def cleanup_files(file_paths):
-    """Safely remove temporary files"""
-    for file_path in file_paths:
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info(f"Successfully removed temporary file: {file_path}")
-        except Exception as e:
-            logger.error(f"Failed to remove temporary file {file_path}: {str(e)}")
-
-def create_placeholder_image(text="Image Error"):
-    """Create a placeholder image when original is unavailable"""
-    placeholder = np.zeros((100, 100, 3), dtype=np.uint8)
-    cv2.putText(placeholder, text, (10, 50), 
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    return placeholder
-
-def sanitize_text(text):
-    """Replace Unicode characters with ASCII equivalents for PDF compatibility"""
-    replacements = {
-        '₃': '3',
-        '°': ' degrees ',
-        '±': '+/-',
-        '×': 'x',
-        '÷': '/',
-        'α': 'alpha',
-        'β': 'beta',
-        'μ': 'mu',
-        'Ω': 'Omega'
-    }
-    for unicode_char, ascii_char in replacements.items():
-        text = text.replace(unicode_char, ascii_char)
-    return text
 
 # ------------------------- Image processing functions ----------------------
 
@@ -219,46 +159,24 @@ def rgb_to_hsv_chroma_hue(r, g, b):
 def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chroma, corrected_value, 
                                  tvbn_limit, fish_mass, headspace, temp_c):
     """Calculate freshness parameters based on the original code"""
-    
     # pH calculation
-    # --- 1. NEW pH Calculation based on provided Hue-pH correlation ---
-    ph_from_hue = 10.6 - (0.03 * corrected_hue)
+    ph_from_hue = (114.2 - corrected_hue) / 5.87
     avg_ph = ph_from_hue
 
-    # --- 2. Calculate Spoilage Rate and Total Shelf Life at current temp using Arrhenius ---
-    # Constants from our derived model
-    A = 5.35e13  # Pre-exponential factor (day⁻¹)
-    Ea = 77850   # Activation Energy (J/mol)
-    R = 8.314    # Gas Constant (J/mol·K)
+    # Ammonia calculation
+    nh3_ppm_pred = corrected_chroma * 0.5 + 10
+    nh3_ppm_pred = max(0, min(100, nh3_ppm_pred))
 
-    # Convert temperature to Kelvin
-    temp_k = temp_c + 273.15
-
-    # Calculate the spoilage rate r(T) and total shelf life t(T)
-    r_T = A * math.exp(-Ea / (R * temp_k)) # Spoilage rate (day⁻¹)
-    t_T = 1 / r_T                          # Total shelf life (days) from H=150 to H=130
-
-    # --- 3. Calculate Remaining Shelf Life based on Current Hue ---
-    shelf_life = max(0, (corrected_hue - 130) / 20 * t_T)
-
-    # --- 4. Predict TVB-N based on Current Hue (New Linear Model) ---
-    # Equation: TVB-N_pred = slope * corrected_hue + intercept
-    #slope_tvbn = (30 - 15) / (130 - 150) # = 15 / (-20) = -0.75
-    # Solve for intercept (b): 15 = (-0.75)*150 + b -> b = 15 + 112.5 = 127.5
-    tvbn_pred = (-0.75) * corrected_hue + 127.5
-    # Ensure prediction is within realistic bounds
-    tvbn_pred = max(0, min(30, tvbn_pred))
-
-    # --- 5. (Optional) Keep your original NH3/Headspace calculation for limits ---
-    # This section is kept for compatibility but is no longer used for shelf life.
     # Calculate ammonia limit based on input parameters
+    R = 0.0821  # Gas constant (L·atm·K⁻¹·mol⁻¹)
     P = 1  # Pressure (atm)
     molecular_weight = 17.03  # NH₃
-    molar_volume = (R * temp_k) / P # Uses R from Arrhenius calculation above
+    temp_k = temp_c + 273.15
+    molar_volume = (R * temp_k) / P
 
-    # TVB-N calculation using the user-defined tvbn_limit
+    # TVB-N calculation
     tvbn_mg = (tvbn_limit * fish_mass) / 100
-
+    
     # Compute gaseous NH3 fraction (temperature/pH-dependent)
     total_nh3_mg = 0.6 * tvbn_mg  # Assuming that 60% of TVB-N is Ammonia
 
@@ -267,23 +185,23 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     f_NH3 = NH3_ratio / (1 + NH3_ratio)  # Fraction of free NH3
     gaseous_nh3_mg = f_NH3 * total_nh3_mg  # Free and gaseous ammonia
 
-    tvbn_mg_current = (tvbn_pred * fish_mass) / 100 # Predicted TVB-N mass
-    total_nh3_mg_current = 0.6 * tvbn_mg_current  # Assume 60% of TVB-N is Ammonia
-    gaseous_nh3_mg_current = f_NH3 * total_nh3_mg_current # Gaseous ammonia mass now
-                                     
     # Fish volume and headspace
-    density_kg_per_m3 = 1080.0
+    density_kg_per_m3 = 1080.0  # Average density of fish (kg/m3)
     fish_volume_L = ((fish_mass / 1000) / density_kg_per_m3) * 1000
-    Actual_headspace = max(headspace - fish_volume_L, 0.001)
+    Actual_headspace = max(headspace - fish_volume_L, 0.001)  # Avoid division by zero
 
-    # Convert gaseous NH₃ to ppm (this is the safety limit)
+    # Convert gaseous NH₃ to ppm
     nh3_ppm_limit = (gaseous_nh3_mg * molar_volume) / (molecular_weight * Actual_headspace)
 
-    # --- 6. Empirical NH3 prediction from Chroma ---
-    nh3_ppm_pred = (gaseous_nh3_mg_current * molar_volume) / (molecular_weight * Actual_headspace)
-    nh3_ppm_pred = max(0, min(100, nh3_ppm_pred))
+    # Shelf life calculation
+    r_mg_per_kg_hr = 5.83  # Average ammonia production rate by fish
 
-    ########################################################################
+    shelf_life = max(0, (nh3_ppm_limit - nh3_ppm_pred) / 
+                   (r_mg_per_kg_hr * (fish_mass / 1000) / Actual_headspace / 24))
+
+    # TVB-N prediction
+    tvbn_pred = max(0, min(100, ((nh3_ppm_pred * molecular_weight * Actual_headspace * 100) /
+                                (molar_volume * 0.60 * fish_mass))))
 
     # Validate results
     warnings = []
@@ -391,7 +309,7 @@ def process_image():
                 images_response[name] = cv2_to_b64(cropped_img)
             else:
                 # Create a placeholder black image
-                placeholder = create_placeholder_image(f"{name.capitalize()} Not Found")
+                placeholder = np.zeros((100, 100, 3), dtype=np.uint8)
                 images_response[name] = cv2_to_b64(placeholder)
                 logger.warning(f"Empty cropped image for {name}, using placeholder")
 
@@ -432,178 +350,150 @@ def process_image():
 
 @app.route('/save_pdf', methods=['POST'])
 def save_pdf():
-    temp_files = []
-    out_temp = None
-    
     try:
-        logger.info("PDF generation started")
-        
         data = app.config.get('LAST_ANALYSIS')
         params = app.config.get('LAST_PARAMS')
         
         if not data:
-            logger.error("No analysis data available for PDF generation")
             return jsonify({'error': 'No analysis available'}), 400
 
         pdf = FPDF()
         pdf.add_page()
-        
-        # Use core font to avoid Unicode issues
-        pdf.set_font("Helvetica", size=10)
+        pdf.set_font("Arial", size=12)
         
         # Header
-        pdf.set_font("Helvetica", 'B', 16)
-        pdf.cell(200, 10, text="Fish Freshness Analyzer", align='C')
-        pdf.ln(8)
-        pdf.set_font("Helvetica", '', 10)
-        pdf.cell(200, 8, text="Developed by PACK Group, ATB Potsdam, Germany", align='C')
-        pdf.ln(12)
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(200, 10, txt="Fish Freshness Analyzer", ln=1, align='C')
+        pdf.set_font("Arial", '', 12)
+        pdf.cell(200, 10, txt="Developed by PACK Group, ATB Potsdam, Germany", ln=1, align='C', 
+                link="https://www.atb-potsdam.de/en/about-us/areas-of-competence/systems-process-engineering/storage-and-packaging")
+        pdf.ln(10)
         
         # Input Parameters section
-        pdf.set_font("Helvetica", 'B', 14)
-        pdf.cell(200, 10, text="Input Parameters")
-        pdf.ln(8)
-        pdf.set_font("Helvetica", '', 10)
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(200, 10, txt="Input Parameters", ln=1)
+        pdf.set_font("Arial", '', 12)
         
         if params:
-            pdf.cell(60, 8, text="Fish Mass:")
-            pdf.cell(0, 8, text=f"{params['fish_mass']:.2f} g")
-            pdf.ln(8)
+            pdf.cell(60, 10, txt="Fish Mass:", ln=0)
+            pdf.cell(0, 10, txt=f"{params['fish_mass']:.2f} g", ln=1)
             
-            pdf.cell(60, 8, text="TVB-N Limit:")
-            pdf.cell(0, 8, text=f"{params['tvbn_limit']:.2f} mg/100g")
-            pdf.ln(8)
+            pdf.cell(60, 10, txt="TVB-N Limit:", ln=0)
+            pdf.cell(0, 10, txt=f"{params['tvbn_limit']:.2f} mg/100g", ln=1)
             
-            pdf.cell(60, 8, text="Temperature:")
-            pdf.cell(0, 8, text=f"{params['temp_c']:.2f} C")  # Removed ° symbol
-            pdf.ln(8)
+            pdf.cell(60, 10, txt="Temperature:", ln=0)
+            pdf.cell(0, 10, txt=f"{params['temp_c']:.2f} °C", ln=1)
             
-            pdf.cell(60, 8, text="Package Volume:")
-            pdf.cell(0, 8, text=f"{params['headspace']:.2f} L")
-            pdf.ln(8)
+            pdf.cell(60, 10, txt="Package Volume:", ln=0)
+            pdf.cell(0, 10, txt=f"{params['headspace']:.2f} L", ln=1)
         
         pdf.ln(10)
         
-        # Analysis Results section - Extract only the numeric values
-        pdf.set_font("Helvetica", 'B', 14)
-        pdf.cell(200, 10, text="Analysis Results")
-        pdf.ln(8)
+        # Extracted Images section
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(200, 10, txt="Extracted Images", ln=1)
+        pdf.ln(5)
         
-        # Extract only numeric values from the results to avoid text parsing issues
-        try:
-            # Parse the numeric values from the text strings
-            def extract_value(text_string, prefix):
-                """Extract numeric value from formatted text"""
-                if prefix in text_string:
-                    # Find the numeric part after the prefix
-                    parts = text_string.split(prefix)
-                    if len(parts) > 1:
-                        # Extract first number found
-                        import re
-                        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", parts[1])
-                        if numbers:
-                            return float(numbers[0])
-                return "N/A"
+        # Save images to temporary files and add to PDF
+        temp_files = []
+        for name, img_b64 in data['images'].items():
+            label = {
+                'original': 'Original Image',
+                'black': 'Black Reference',
+                'white': 'White Reference',
+                'target': 'Fish Patch'
+            }.get(name, name)
             
-            # Extract values safely
-            ph_value = extract_value(data['results']['ph'], "pH: ")
-            tvbn_value = extract_value(data['results']['tvbn'], "TVB-N: ")
-            ammonia_value = extract_value(data['results']['ammonia'], "Ammonia (NH3 + NH4+): ")
-            shelf_life_value = extract_value(data['results']['shelf_life'], "Remaining Shelf Life: ")
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, txt=label, ln=1)
             
-            # Freshness Parameters
-            pdf.set_font("Helvetica", 'B', 12)
-            pdf.cell(200, 8, text="Freshness Parameters")
-            pdf.ln(8)
-            pdf.set_font("Helvetica", '', 10)
+            # Decode and save image to temporary file
+            b64 = img_b64.split(',', 1)[1]
+            imgdata = base64.b64decode(b64)
+            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            tmp.write(imgdata)
+            tmp.flush()
+            tmp.close()
+            temp_files.append(tmp.name)
             
-            # Add key results using extracted numeric values
-            pdf.cell(80, 8, text="pH:")
-            pdf.cell(0, 8, text=f"{ph_value:.2f} (+/- 0.45)" if ph_value != "N/A" else "N/A")
-            pdf.ln(8)
+            try:
+                pdf.image(tmp.name, x=10, y=pdf.get_y(), w=60)
+            except Exception:
+                logger.exception('Failed to insert image into PDF')
             
-            pdf.cell(80, 8, text="TVB-N:")
-            pdf.cell(0, 8, text=f"{tvbn_value:.2f} mg/100g" if tvbn_value != "N/A" else "N/A")
-            pdf.ln(8)
-            
-            pdf.cell(80, 8, text="Ammonia (NH3 + NH4+):")
-            pdf.cell(0, 8, text=f"{ammonia_value:.2f} ppm" if ammonia_value != "N/A" else "N/A")
-            pdf.ln(8)
-            
-            pdf.cell(80, 8, text="Shelf Life:")
-            pdf.cell(0, 8, text=f"{shelf_life_value:.2f} days" if shelf_life_value != "N/A" else "N/A")
-            pdf.ln(8)
-            
-        except Exception as e:
-            logger.error(f"Error extracting values: {str(e)}")
-            pdf.multi_cell(0, 8, text="Error: Could not extract analysis values from results.")
-            pdf.ln(8)
+            pdf.ln(50)
         
-        # Warnings - sanitize thoroughly
+        pdf.ln(10)
+        
+        # Analysis Results section
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(200, 10, txt="Analysis Results", ln=1)
+        pdf.ln(5)
+        
+        # Reference Values
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="Reference Values", ln=1)
+        pdf.set_font("Arial", '', 12)
+        pdf.multi_cell(0, 10, txt=data['results']['rgb'])
+        pdf.multi_cell(0, 10, txt=data['results']['hsv'])
+        pdf.multi_cell(0, 10, txt=data['results']['chroma'])
+        pdf.multi_cell(0, 10, txt=data['results']['hue'])
+        pdf.ln(5)
+        
+        # Corrected Values
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="Corrected Values for Fish Patch", ln=1)
+        pdf.set_font("Arial", '', 12)
+        pdf.multi_cell(0, 10, txt=data['results']['corrected_rgb'])
+        pdf.multi_cell(0, 10, txt=data['results']['corrected_v'])
+        pdf.multi_cell(0, 10, txt=data['results']['corrected_chroma'])
+        pdf.multi_cell(0, 10, txt=data['results']['corrected_hue'])
+        pdf.ln(5)
+        
+        # Freshness Parameters
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="Freshness Parameters", ln=1)
+        pdf.set_font("Arial", '', 12)
+        pdf.multi_cell(0, 10, txt=data['results']['ph'])
+        pdf.multi_cell(0, 10, txt=data['results']['tvbn'])
+        pdf.multi_cell(0, 10, txt=data['results']['ammonia'])
+        pdf.multi_cell(0, 10, txt=data['results']['shelf_life'])
+        pdf.ln(5)
+        
+        # Warnings
         if data['results']['warnings']:
-            pdf.set_font("Helvetica", 'B', 12)
-            pdf.cell(200, 10, text="Warnings")
-            pdf.ln(8)
-            pdf.set_font("Helvetica", '', 10)
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(200, 10, txt="Warnings", ln=1)
+            pdf.set_font("Arial", '', 12)
             for warning in data['results']['warnings']:
-                # Comprehensive sanitization
-                safe_warning = warning
-                # Remove all non-ASCII characters
-                safe_warning = ''.join(char for char in safe_warning if ord(char) < 128)
-                # Additional replacements
-                safe_warning = safe_warning.replace('°', ' degrees ')
-                safe_warning = safe_warning.replace('±', '+/-')
-                safe_warning = safe_warning.replace('×', 'x')
-                safe_warning = safe_warning.replace('÷', '/')
-                
-                try:
-                    pdf.multi_cell(0, 8, text=safe_warning)
-                except:
-                    # Ultimate fallback: ASCII-only
-                    ascii_warning = safe_warning.encode('ascii', 'ignore').decode('ascii')
-                    pdf.multi_cell(0, 8, text=ascii_warning)
+                pdf.multi_cell(0, 10, txt=warning)
                 pdf.ln(5)
         
-        # Save PDF to temporary file in upload folder
-        upload_folder = app.config.get('UPLOAD_FOLDER', '/tmp')
-        os.makedirs(upload_folder, exist_ok=True)
-        
-        out_temp = tempfile.NamedTemporaryFile(
-            suffix='.pdf', 
-            delete=False,
-            dir=upload_folder
-        )
+        # Save PDF to temporary file
+        out_temp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
         pdf.output(out_temp.name)
         out_temp.flush()
+        out_temp.close()
         
-        logger.info("PDF generated successfully")
+        # Cleanup temporary files
+        for f in temp_files:
+            try:
+                if os.path.exists(f):
+                    os.remove(f)
+            except Exception:
+                logger.exception("Failed to delete tmp file %s", f)
         
-        # Send file response
         return send_file(
             out_temp.name,
             as_attachment=True,
-            download_name=secure_filename('analysis_report.pdf'),
+            download_name='analysis_report.pdf',
             mimetype='application/pdf'
         )
         
     except Exception as e:
-        logger.exception("Detailed error in save_pdf:")
-        return jsonify({'error': f'PDF generation failed: {str(e)}'}), 500
-        
-    finally:
-        # Cleanup temporary files
-        cleanup_files(temp_files)
-        if out_temp and os.path.exists(out_temp.name):
-            cleanup_files([out_temp.name])
+        logger.exception("Error saving PDF")
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
-    # Verify directory permissions
-    upload_folder = app.config.get('UPLOAD_FOLDER', '/tmp')
-    if not os.path.exists(upload_folder):
-        os.makedirs(upload_folder)
-    if not os.access(upload_folder, os.W_OK):
-        logger.error(f"No write permission for directory: {upload_folder}")
-    
-    logger.info(f"Starting Flask application with upload folder: {upload_folder}")
     app.run(debug=True, host='0.0.0.0', port=5000)
