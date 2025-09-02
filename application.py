@@ -179,7 +179,7 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     t_T = 1 / r_T                          # Total shelf life (days) from H=150 to H=130
 
     # --- 3. Calculate Remaining Shelf Life based on Current Hue ---
-    shelf_life = max(0, ((corrected_hue - 130) / 20 * t_T)-0.5)
+    shelf_life = max(0, (corrected_hue - 130) / 20 * t_T)
 
     # --- 4. Predict TVB-N based on Current Hue (New Linear Model) ---
     # Equation: TVB-N_pred = slope * corrected_hue + intercept
@@ -187,7 +187,7 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     # Solve for intercept (b): 15 = (-0.75)*150 + b -> b = 15 + 112.5 = 127.5
     tvbn_pred = (-0.75) * corrected_hue + 127.5
     # Ensure prediction is within realistic bounds
-    tvbn_pred = max(0, tvbn_pred)
+    tvbn_pred = max(0, min(30, tvbn_pred))
 
     # --- 5. (Optional) Keep your original NH3/Headspace calculation for limits ---
     # This section is kept for compatibility but is no longer used for shelf life.
@@ -221,7 +221,7 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
 
     # --- 6. Empirical NH3 prediction from Chroma ---
     nh3_ppm_pred = (gaseous_nh3_mg_current * molar_volume) / (molecular_weight * Actual_headspace)
-    nh3_ppm_pred = max(0, nh3_ppm_pred)
+    nh3_ppm_pred = max(0, min(100, nh3_ppm_pred))
 
     #####################
 
@@ -346,7 +346,7 @@ def process_image():
                 'corrected_v': f"Corrected V (Value): {corrected_value:.2f}",
                 'corrected_chroma': f"Corrected Chroma: {corrected_chroma:.2f}",
                 'corrected_hue': f"Corrected Hue: {corrected_hue:.2f}°",
-                'ph': f"pH: {freshness_params['ph']:.2f} (±0.45)",
+                'ph': f"pH: {freshness_params['ph']:.2f}",
                 'tvbn': f"TVB-N: {freshness_params['tvbn_pred']:.2f} mg/100g (limit: {tvbn_limit:.2f} mg/100g)",
                 'ammonia': f"Ammonia: {freshness_params['nh3_ppm_pred']:.2f} ppm (limit: {freshness_params['nh3_ppm_limit']:.2f} ppm)",
                 'shelf_life': f"Remaining Shelf Life: {freshness_params['shelf_life']:.2f} days",
