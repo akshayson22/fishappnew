@@ -179,7 +179,7 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     t_T = 1 / r_T                          # Total shelf life (days) from H=150 to H=130
 
     # --- 3. Calculate Remaining Shelf Life based on Current Hue ---
-    shelf_life = max(0, (corrected_hue - 130) / 20 * t_T)
+    shelf_life = max(0, ((corrected_hue - 130) / 20 * t_T)-0.5)
 
     # --- 4. Predict TVB-N based on Current Hue (New Linear Model) ---
     # Equation: TVB-N_pred = slope * corrected_hue + intercept
@@ -187,7 +187,7 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     # Solve for intercept (b): 15 = (-0.75)*150 + b -> b = 15 + 112.5 = 127.5
     tvbn_pred = (-0.75) * corrected_hue + 127.5
     # Ensure prediction is within realistic bounds
-    tvbn_pred = max(0, min(30, tvbn_pred))
+    tvbn_pred = max(0, tvbn_pred)
 
     # --- 5. (Optional) Keep your original NH3/Headspace calculation for limits ---
     # This section is kept for compatibility but is no longer used for shelf life.
@@ -221,7 +221,7 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
 
     # --- 6. Empirical NH3 prediction from Chroma ---
     nh3_ppm_pred = (gaseous_nh3_mg_current * molar_volume) / (molecular_weight * Actual_headspace)
-    nh3_ppm_pred = max(0, min(100, nh3_ppm_pred))
+    nh3_ppm_pred = max(0, nh3_ppm_pred)
 
     #####################
 
