@@ -359,44 +359,50 @@ def save_pdf():
 
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("Arial", size=12)
         
-        # Header
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(200, 10, txt="Fish Freshness Analyzer", ln=1, align='C')
-        pdf.set_font("Arial", '', 12)
-        pdf.cell(200, 10, txt="Developed by PACK Group, ATB Potsdam, Germany", ln=1, align='C', 
+        # Set margins and auto page break
+        pdf.set_margins(15, 15, 15)
+        pdf.set_auto_page_break(True, margin=15)
+        
+        # Header section - Uniform font sizes with link
+        pdf.set_font("Arial", 'B', 18)
+        pdf.cell(0, 12, "Fish Freshness Analyzer", 0, 1, 'C')
+        pdf.set_font("Arial", 'I', 12)
+        pdf.cell(0, 8, "Developed by PACK Group, ATB Potsdam, Germany", 0, 1, 'C', 
                 link="https://www.atb-potsdam.de/en/about-us/areas-of-competence/systems-process-engineering/storage-and-packaging")
-        pdf.ln(10)
+        pdf.ln(8)
         
         # Input Parameters section
-        pdf.set_font("Arial", 'B', 14)
-        pdf.cell(200, 10, txt="Input Parameters", ln=1)
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, "Input Parameters", 0, 1)
         pdf.set_font("Arial", '', 12)
         
         if params:
-            pdf.cell(60, 10, txt="Fish Mass:", ln=0)
-            pdf.cell(0, 10, txt=f"{params['fish_mass']:.2f} g", ln=1)
+            pdf.cell(50, 8, "Fish Mass:", 0, 0)
+            pdf.cell(0, 8, f"{params['fish_mass']:.2f} g", 0, 1)
             
-            pdf.cell(60, 10, txt="TVB-N Limit:", ln=0)
-            pdf.cell(0, 10, txt=f"{params['tvbn_limit']:.2f} mg/100g", ln=1)
+            pdf.cell(50, 8, "TVB-N Limit:", 0, 0)
+            pdf.cell(0, 8, f"{params['tvbn_limit']:.2f} mg/100g", 0, 1)
             
-            pdf.cell(60, 10, txt="Temperature:", ln=0)
-            pdf.cell(0, 10, txt=f"{params['temp_c']:.2f} °C", ln=1)
+            pdf.cell(50, 8, "Temperature:", 0, 0)
+            pdf.cell(0, 8, f"{params['temp_c']:.2f} °C", 0, 1)
             
-            pdf.cell(60, 10, txt="Package Volume:", ln=0)
-            pdf.cell(0, 10, txt=f"{params['headspace']:.2f} L", ln=1)
+            pdf.cell(50, 8, "Package Volume:", 0, 0)
+            pdf.cell(0, 8, f"{params['headspace']:.2f} L", 0, 1)
         
         pdf.ln(10)
         
         # Extracted Images section
-        pdf.set_font("Arial", 'B', 14)
-        pdf.cell(200, 10, txt="Extracted Images", ln=1)
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, "Extracted Images", 0, 1)
         pdf.ln(5)
         
         # Save images to temporary files and add to PDF
         temp_files = []
-        for name, img_b64 in data['images'].items():
+        image_width = 55
+        y_position = pdf.get_y()
+        
+        for i, (name, img_b64) in enumerate(data['images'].items()):
             label = {
                 'original': 'Original Image',
                 'black': 'Black Reference',
@@ -404,8 +410,18 @@ def save_pdf():
                 'target': 'Fish Patch'
             }.get(name, name)
             
+            # Check if we need a new page (every 2 images)
+            if i % 2 == 0 and i > 0:
+                pdf.add_page()
+                y_position = pdf.get_y()
+            
+            # Calculate x position (left or right)
+            x_position = 15 if i % 2 == 0 else 105
+            
+            # Set label with consistent font
+            pdf.set_xy(x_position, y_position)
             pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 10, txt=label, ln=1)
+            pdf.cell(image_width, 8, label, 0, 1)
             
             # Decode and save image to temporary file
             b64 = img_b64.split(',', 1)[1]
@@ -416,58 +432,129 @@ def save_pdf():
             tmp.close()
             temp_files.append(tmp.name)
             
+            # Add image with proper spacing
             try:
-                pdf.image(tmp.name, x=10, y=pdf.get_y(), w=60)
+                pdf.image(tmp.name, x=x_position, y=pdf.get_y(), w=image_width)
             except Exception:
                 logger.exception('Failed to insert image into PDF')
             
-            pdf.ln(50)
+            # Update y position for next image
+            if i % 2 == 0:
+                # Same row, right side
+                current_y = pdf.get_y()
+                pdf.set_xy(x_position + image_width + 10, y_position + 8)
+            else:
+                # New row
+                y_position = pdf.get_y() + 45
+                pdf.set_xy(15, y_position)
         
-        pdf.ln(10)
+        pdf.ln(50)
         
         # Analysis Results section
-        pdf.set_font("Arial", 'B', 14)
-        pdf.cell(200, 10, txt="Analysis Results", ln=1)
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, "Analysis Results", 0, 1)
         pdf.ln(5)
         
-        # Reference Values
+        # Reference Values - Use the actual data structure
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 8, "Reference Values", 0, 1)
+        pdf.set_font("Arial", '', 11)
+        
+        # RGB Values
         pdf.set_font("Arial", 'B', 12)
-        pdf.cell(200, 10, txt="Reference Values", ln=1)
-        pdf.set_font("Arial", '', 12)
-        pdf.multi_cell(0, 10, txt=data['results']['rgb'])
-        pdf.multi_cell(0, 10, txt=data['results']['hsv'])
-        pdf.multi_cell(0, 10, txt=data['results']['chroma'])
-        pdf.multi_cell(0, 10, txt=data['results']['hue'])
+        pdf.cell(0, 7, "RGB Values:", 0, 1)
+        pdf.set_font("Arial", '', 11)
+        rgb_text = data['results']['rgb'].replace("RGB - ", "")
+        rgb_parts = rgb_text.split(' | ')
+        for part in rgb_parts:
+            pdf.cell(0, 6, part, 0, 1)
+        pdf.ln(3)
+        
+        # HSV Values
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 7, "HSV Values:", 0, 1)
+        pdf.set_font("Arial", '', 11)
+        hsv_text = data['results']['hsv'].replace("HSV - ", "")
+        hsv_parts = hsv_text.split(' | ')
+        for part in hsv_parts:
+            pdf.cell(0, 6, part, 0, 1)
+        pdf.ln(3)
+        
+        # Chroma Values
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 7, "Chroma Values:", 0, 1)
+        pdf.set_font("Arial", '', 11)
+        chroma_text = data['results']['chroma'].replace("Chroma - ", "")
+        chroma_parts = chroma_text.split(' | ')
+        for part in chroma_parts:
+            pdf.cell(0, 6, part, 0, 1)
+        pdf.ln(3)
+        
+        # Hue Values
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 7, "Hue Values:", 0, 1)
+        pdf.set_font("Arial", '', 11)
+        hue_text = data['results']['hue'].replace("Hue - ", "")
+        hue_parts = hue_text.split(' | ')
+        for part in hue_parts:
+            pdf.cell(0, 6, part, 0, 1)
         pdf.ln(5)
         
         # Corrected Values
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(200, 10, txt="Corrected Values for Fish Patch", ln=1)
-        pdf.set_font("Arial", '', 12)
-        pdf.multi_cell(0, 10, txt=data['results']['corrected_rgb'])
-        pdf.multi_cell(0, 10, txt=data['results']['corrected_v'])
-        pdf.multi_cell(0, 10, txt=data['results']['corrected_chroma'])
-        pdf.multi_cell(0, 10, txt=data['results']['corrected_hue'])
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 8, "Corrected Values for Fish Patch", 0, 1)
+        pdf.set_font("Arial", '', 11)
+        
+        corrected_data = [
+            data['results']['corrected_rgb'],
+            data['results']['corrected_v'],
+            data['results']['corrected_chroma'],
+            data['results']['corrected_hue']
+        ]
+        
+        for line in corrected_data:
+            if len(line) > 80:
+                parts = [line[i:i+80] for i in range(0, len(line), 80)]
+                for part in parts:
+                    pdf.cell(0, 6, part, 0, 1)
+            else:
+                pdf.cell(0, 6, line, 0, 1)
+            pdf.ln(2)
+        
         pdf.ln(5)
         
         # Freshness Parameters
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(200, 10, txt="Freshness Parameters", ln=1)
-        pdf.set_font("Arial", '', 12)
-        pdf.multi_cell(0, 10, txt=data['results']['ph'])
-        pdf.multi_cell(0, 10, txt=data['results']['tvbn'])
-        pdf.multi_cell(0, 10, txt=data['results']['ammonia'])
-        pdf.multi_cell(0, 10, txt=data['results']['shelf_life'])
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 8, "Freshness Parameters", 0, 1)
+        pdf.set_font("Arial", '', 11)
+        
+        freshness_data = [
+            data['results']['ph'],
+            data['results']['tvbn'],
+            data['results']['ammonia'],
+            data['results']['shelf_life']
+        ]
+        
+        for line in freshness_data:
+            pdf.cell(0, 6, line, 0, 1)
+            pdf.ln(2)
+        
         pdf.ln(5)
         
         # Warnings
         if data['results']['warnings']:
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(200, 10, txt="Warnings", ln=1)
-            pdf.set_font("Arial", '', 12)
+            pdf.set_font("Arial", 'B', 14)
+            pdf.cell(0, 8, "Warnings", 0, 1)
+            pdf.set_font("Arial", '', 11)
+            
             for warning in data['results']['warnings']:
-                pdf.multi_cell(0, 10, txt=warning)
-                pdf.ln(5)
+                if len(warning) > 80:
+                    parts = [warning[i:i+80] for i in range(0, len(warning), 80)]
+                    for part in parts:
+                        pdf.cell(0, 6, part, 0, 1)
+                else:
+                    pdf.cell(0, 6, warning, 0, 1)
+                pdf.ln(3)
         
         # Save PDF to temporary file
         out_temp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
