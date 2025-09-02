@@ -430,165 +430,156 @@ def process_image():
         return jsonify({'error': str(e)}), 500
 
 
+
 @app.route('/save_pdf', methods=['POST'])
 def save_pdf():
-    temp_files = []
-    out_temp = None
-    
     try:
-        logger.info("PDF generation started")
-        
         data = app.config.get('LAST_ANALYSIS')
         params = app.config.get('LAST_PARAMS')
         
         if not data:
-            logger.error("No analysis data available for PDF generation")
             return jsonify({'error': 'No analysis available'}), 400
 
         pdf = FPDF()
         pdf.add_page()
-        
-        # Use core font to avoid Unicode issues
-        pdf.set_font("Helvetica", size=10)
+        pdf.set_font("Arial", size=12)
         
         # Header
-        pdf.set_font("Helvetica", 'B', 16)
-        pdf.cell(200, 10, text="Fish Freshness Analyzer", align='C')
-        pdf.ln(8)
-        pdf.set_font("Helvetica", '', 10)
-        pdf.cell(200, 8, text="Developed by PACK Group, ATB Potsdam, Germany", align='C')
-        pdf.ln(12)
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(200, 10, txt="Fish Freshness Analyzer", ln=1, align='C')
+        pdf.set_font("Arial", '', 12)
+        pdf.cell(200, 10, txt="Developed by PACK Group, ATB Potsdam, Germany", ln=1, align='C', 
+                link="https://www.atb-potsdam.de/en/about-us/areas-of-competence/systems-process-engineering/storage-and-packaging")
+        pdf.ln(10)
         
         # Input Parameters section
-        pdf.set_font("Helvetica", 'B', 14)
-        pdf.cell(200, 10, text="Input Parameters")
-        pdf.ln(8)
-        pdf.set_font("Helvetica", '', 10)
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(200, 10, txt="Input Parameters", ln=1)
+        pdf.set_font("Arial", '', 12)
         
         if params:
-            pdf.cell(60, 8, text="Fish Mass:")
-            pdf.cell(0, 8, text=f"{params['fish_mass']:.2f} g")
-            pdf.ln(8)
+            pdf.cell(60, 10, txt="Fish Mass:", ln=0)
+            pdf.cell(0, 10, txt=f"{params['fish_mass']:.2f} g", ln=1)
             
-            pdf.cell(60, 8, text="TVB-N Limit:")
-            pdf.cell(0, 8, text=f"{params['tvbn_limit']:.2f} mg/100g")
-            pdf.ln(8)
+            pdf.cell(60, 10, txt="TVB-N Limit:", ln=0)
+            pdf.cell(0, 10, txt=f"{params['tvbn_limit']:.2f} mg/100g", ln=1)
             
-            pdf.cell(60, 8, text="Temperature:")
-            pdf.cell(0, 8, text=f"{params['temp_c']:.2f} C")  # Removed ° symbol
-            pdf.ln(8)
+            pdf.cell(60, 10, txt="Temperature:", ln=0)
+            pdf.cell(0, 10, txt=f"{params['temp_c']:.2f} °C", ln=1)
             
-            pdf.cell(60, 8, text="Package Volume:")
-            pdf.cell(0, 8, text=f"{params['headspace']:.2f} L")
-            pdf.ln(8)
+            pdf.cell(60, 10, txt="Package Volume:", ln=0)
+            pdf.cell(0, 10, txt=f"{params['headspace']:.2f} L", ln=1)
         
         pdf.ln(10)
         
-        # Analysis Results section - Extract only the numeric values
-        pdf.set_font("Helvetica", 'B', 14)
-        pdf.cell(200, 10, text="Analysis Results")
-        pdf.ln(8)
+        # Extracted Images section
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(200, 10, txt="Extracted Images", ln=1)
+        pdf.ln(5)
         
-        # Extract only numeric values from the results to avoid text parsing issues
-        try:
-            # Parse the numeric values from the text strings
-            def extract_value(text_string, prefix):
-                """Extract numeric value from formatted text"""
-                if prefix in text_string:
-                    # Find the numeric part after the prefix
-                    parts = text_string.split(prefix)
-                    if len(parts) > 1:
-                        # Extract first number found
-                        import re
-                        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", parts[1])
-                        if numbers:
-                            return float(numbers[0])
-                return "N/A"
+        # Save images to temporary files and add to PDF
+        temp_files = []
+        for name, img_b64 in data['images'].items():
+            label = {
+                'original': 'Original Image',
+                'black': 'Black Reference',
+                'white': 'White Reference',
+                'target': 'Fish Patch'
+            }.get(name, name)
             
-            # Extract values safely
-            ph_value = extract_value(data['results']['ph'], "pH: ")
-            tvbn_value = extract_value(data['results']['tvbn'], "TVB-N: ")
-            ammonia_value = extract_value(data['results']['ammonia'], "Ammonia (NH3 + NH4+): ")
-            shelf_life_value = extract_value(data['results']['shelf_life'], "Remaining Shelf Life: ")
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, txt=label, ln=1)
             
-            # Freshness Parameters
-            pdf.set_font("Helvetica", 'B', 12)
-            pdf.cell(200, 8, text="Freshness Parameters")
-            pdf.ln(8)
-            pdf.set_font("Helvetica", '', 10)
+            # Decode and save image to temporary file
+            b64 = img_b64.split(',', 1)[1]
+            imgdata = base64.b64decode(b64)
+            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            tmp.write(imgdata)
+            tmp.flush()
+            tmp.close()
+            temp_files.append(tmp.name)
             
-            # Add key results using extracted numeric values
-            pdf.cell(80, 8, text="pH:")
-            pdf.cell(0, 8, text=f"{ph_value:.2f} (+/- 0.45)" if ph_value != "N/A" else "N/A")
-            pdf.ln(8)
+            try:
+                pdf.image(tmp.name, x=10, y=pdf.get_y(), w=60)
+            except Exception:
+                logger.exception('Failed to insert image into PDF')
             
-            pdf.cell(80, 8, text="TVB-N:")
-            pdf.cell(0, 8, text=f"{tvbn_value:.2f} mg/100g" if tvbn_value != "N/A" else "N/A")
-            pdf.ln(8)
-            
-            pdf.cell(80, 8, text="Ammonia (NH3 + NH4+):")
-            pdf.cell(0, 8, text=f"{ammonia_value:.2f} ppm" if ammonia_value != "N/A" else "N/A")
-            pdf.ln(8)
-            
-            pdf.cell(80, 8, text="Shelf Life:")
-            pdf.cell(0, 8, text=f"{shelf_life_value:.2f} days" if shelf_life_value != "N/A" else "N/A")
-            pdf.ln(8)
-            
-        except Exception as e:
-            logger.error(f"Error extracting values: {str(e)}")
-            pdf.multi_cell(0, 8, text="Error: Could not extract analysis values from results.")
-            pdf.ln(8)
+            pdf.ln(50)
         
-        # Warnings - sanitize thoroughly
+        pdf.ln(10)
+        
+        # Analysis Results section
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(200, 10, txt="Analysis Results", ln=1)
+        pdf.ln(5)
+        
+        # Reference Values
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="Reference Values", ln=1)
+        pdf.set_font("Arial", '', 12)
+        pdf.multi_cell(0, 10, txt=data['results']['rgb'])
+        pdf.multi_cell(0, 10, txt=data['results']['hsv'])
+        pdf.multi_cell(0, 10, txt=data['results']['chroma'])
+        pdf.multi_cell(0, 10, txt=data['results']['hue'])
+        pdf.ln(5)
+        
+        # Corrected Values
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="Corrected Values for Fish Patch", ln=1)
+        pdf.set_font("Arial", '', 12)
+        pdf.multi_cell(0, 10, txt=data['results']['corrected_rgb'])
+        pdf.multi_cell(0, 10, txt=data['results']['corrected_v'])
+        pdf.multi_cell(0, 10, txt=data['results']['corrected_chroma'])
+        pdf.multi_cell(0, 10, txt=data['results']['corrected_hue'])
+        pdf.ln(5)
+        
+        # Freshness Parameters
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(200, 10, txt="Freshness Parameters", ln=1)
+        pdf.set_font("Arial", '', 12)
+        pdf.multi_cell(0, 10, txt=data['results']['ph'])
+        pdf.multi_cell(0, 10, txt=data['results']['tvbn'])
+        pdf.multi_cell(0, 10, txt=data['results']['ammonia'])
+        pdf.multi_cell(0, 10, txt=data['results']['shelf_life'])
+        pdf.ln(5)
+        
+        # Warnings
         if data['results']['warnings']:
-            pdf.set_font("Helvetica", 'B', 12)
-            pdf.cell(200, 10, text="Warnings")
-            pdf.ln(8)
-            pdf.set_font("Helvetica", '', 10)
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(200, 10, txt="Warnings", ln=1)
+            pdf.set_font("Arial", '', 12)
             for warning in data['results']['warnings']:
-                # Comprehensive sanitization
-                safe_warning = warning
-                # Remove all non-ASCII characters
-                safe_warning = ''.join(char for char in safe_warning if ord(char) < 128)
-                # Additional replacements
-                safe_warning = safe_warning.replace('°', ' degrees ')
-                safe_warning = safe_warning.replace('±', '+/-')
-                safe_warning = safe_warning.replace('×', 'x')
-                safe_warning = safe_warning.replace('÷', '/')
-                
-                try:
-                    pdf.multi_cell(0, 8, text=safe_warning)
-                except:
-                    # Ultimate fallback: ASCII-only
-                    ascii_warning = safe_warning.encode('ascii', 'ignore').decode('ascii')
-                    pdf.multi_cell(0, 8, text=ascii_warning)
+                pdf.multi_cell(0, 10, txt=warning)
                 pdf.ln(5)
         
-        # Save PDF to temporary file in upload folder
-        upload_folder = app.config.get('UPLOAD_FOLDER', '/tmp')
-        os.makedirs(upload_folder, exist_ok=True)
-        
-        out_temp = tempfile.NamedTemporaryFile(
-            suffix='.pdf', 
-            delete=False,
-            dir=upload_folder
-        )
+        # Save PDF to temporary file
+        out_temp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
         pdf.output(out_temp.name)
         out_temp.flush()
+        out_temp.close()
         
-        logger.info("PDF generated successfully")
+        # Cleanup temporary files
+        for f in temp_files:
+            try:
+                if os.path.exists(f):
+                    os.remove(f)
+            except Exception:
+                logger.exception("Failed to delete tmp file %s", f)
         
-        # Send file response
         return send_file(
             out_temp.name,
             as_attachment=True,
-            download_name=secure_filename('analysis_report.pdf'),
+            download_name='analysis_report.pdf',
             mimetype='application/pdf'
         )
         
     except Exception as e:
-        logger.exception("Detailed error in save_pdf:")
-        return jsonify({'error': f'PDF generation failed: {str(e)}'}), 500
+        logger.exception("Error saving PDF")
+        return jsonify({'error': str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
         
     finally:
         # Cleanup temporary files
