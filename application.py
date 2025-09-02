@@ -9,6 +9,8 @@ import numpy as np
 from fpdf import FPDF
 from scipy import ndimage
 from flask import Flask, render_template, request, jsonify, send_file
+from werkzeug.utils import secure_filename
+from io import BytesIO
 
 app = Flask(__name__)
 app.secret_key = 'fish_freshness_analyzer_secret_key'
@@ -17,6 +19,14 @@ app.secret_key = 'fish_freshness_analyzer_secret_key'
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Flask app configuration
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp')
+app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif'}
+
+# Create upload directory if it doesn't exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
 # Constants from the original code
 PRIMARY_COLOR = '#1a2b3c'
 SECONDARY_COLOR = '#0d1a26'
@@ -24,6 +34,39 @@ ACCENT_COLOR = '#3498db'
 SUCCESS_COLOR = '#27ae60'
 WARNING_COLOR = '#ff5555'
 TEXT_COLOR = '#ffffff'
+
+# ------------------------- Utility Functions -------------------------
+
+def validate_image_b64(b64_string):
+    """Validate base64 image string"""
+    try:
+        if not b64_string or ',' not in b64_string:
+            return False
+        header, enc = b64_string.split(',', 1)
+        imgdata = base64.b64decode(enc)
+        # Try to decode the image
+        arr = np.frombuffer(imgdata, np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        return img is not None and img.size > 0
+    except Exception:
+        return False
+
+def cleanup_files(file_paths):
+    """Safely remove temporary files"""
+    for file_path in file_paths:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Successfully removed temporary file: {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to remove temporary file {file_path}: {str(e)}")
+
+def create_placeholder_image(text="Image Error"):
+    """Create a placeholder image when original is unavailable"""
+    placeholder = np.zeros((100, 100, 3), dtype=np.uint8)
+    cv2.putText(placeholder, text, (10, 50), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    return placeholder
 
 # ------------------------- Image processing functions ----------------------
 
@@ -331,7 +374,7 @@ def process_image():
                 images_response[name] = cv2_to_b64(cropped_img)
             else:
                 # Create a placeholder black image
-                placeholder = np.zeros((100, 100, 3), dtype=np.uint8)
+                placeholder = create_placeholder_image(f"{name.capitalize()} Not Found")
                 images_response[name] = cv2_to_b64(placeholder)
                 logger.warning(f"Empty cropped image for {name}, using placeholder")
 
@@ -348,7 +391,7 @@ def process_image():
                 'corrected_hue': f"Corrected Hue: {corrected_hue:.2f}°",
                 'ph': f"pH: {freshness_params['ph']:.2f} (±0.45)",
                 'tvbn': f"TVB-N: {freshness_params['tvbn_pred']:.2f} mg/100g (limit: {tvbn_limit:.2f} mg/100g)",
-                'ammonia': f"Ammonia (NH3 + NH4+): {freshness_params['nh3_ppm_pred']:.2f} ppm (limit: {freshness_params['nh3_ppm_limit']:.2f} ppm)",
+                'ammonia': f"Ammonia (NH₃ + NH₄⁺): {freshness_params['nh3_ppm_pred']:.2f} ppm (limit: {freshness_params['nh3_ppm_limit']:.2f} ppm)",
                 'shelf_life': f"Remaining Shelf Life: {freshness_params['shelf_life']:.2f} days",
                 'warnings': freshness_params['warnings']
             }
@@ -372,11 +415,17 @@ def process_image():
 
 @app.route('/save_pdf', methods=['POST'])
 def save_pdf():
+    temp_files = []
+    out_temp = None
+    
     try:
+        logger.info("PDF generation started")
+        
         data = app.config.get('LAST_ANALYSIS')
         params = app.config.get('LAST_PARAMS')
         
         if not data:
+            logger.error("No analysis data available for PDF generation")
             return jsonify({'error': 'No analysis available'}), 400
 
         pdf = FPDF()
@@ -417,7 +466,6 @@ def save_pdf():
         pdf.ln(5)
         
         # Save images to temporary files and add to PDF
-        temp_files = []
         for name, img_b64 in data['images'].items():
             label = {
                 'original': 'Original Image',
@@ -429,21 +477,43 @@ def save_pdf():
             pdf.set_font("Arial", 'B', 12)
             pdf.cell(0, 10, txt=label, ln=1)
             
+            # Validate image before processing
+            if not validate_image_b64(img_b64):
+                logger.warning(f"Invalid image for {name}, creating placeholder")
+                placeholder = create_placeholder_image(f"{label} Error")
+                _, buf = cv2.imencode('.png', placeholder)
+                img_b64 = 'data:image/png;base64,' + base64.b64encode(buf).decode('ascii')
+            
             # Decode and save image to temporary file
             b64 = img_b64.split(',', 1)[1]
             imgdata = base64.b64decode(b64)
-            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            
+            # Create temporary file in the upload folder
+            upload_folder = app.config.get('UPLOAD_FOLDER', '/tmp')
+            os.makedirs(upload_folder, exist_ok=True)
+            
+            tmp = tempfile.NamedTemporaryFile(
+                suffix='.png', 
+                delete=False,
+                dir=upload_folder
+            )
             tmp.write(imgdata)
             tmp.flush()
             tmp.close()
             temp_files.append(tmp.name)
             
             try:
+                # Get current Y position and check if we need a new page
+                current_y = pdf.get_y()
+                if current_y > 200:  # If we're near the bottom of the page
+                    pdf.add_page()
+                
                 pdf.image(tmp.name, x=10, y=pdf.get_y(), w=60)
-            except Exception:
-                logger.exception('Failed to insert image into PDF')
-            
-            pdf.ln(50)
+                pdf.ln(50)
+            except Exception as e:
+                logger.error(f"Failed to insert image {name} into PDF: {str(e)}")
+                pdf.multi_cell(0, 10, txt=f"Failed to load image: {label}")
+                pdf.ln(5)
         
         pdf.ln(10)
         
@@ -491,31 +561,46 @@ def save_pdf():
                 pdf.multi_cell(0, 10, txt=warning)
                 pdf.ln(5)
         
-        # Save PDF to temporary file
-        out_temp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+        # Save PDF to temporary file in upload folder
+        upload_folder = app.config.get('UPLOAD_FOLDER', '/tmp')
+        os.makedirs(upload_folder, exist_ok=True)
+        
+        out_temp = tempfile.NamedTemporaryFile(
+            suffix='.pdf', 
+            delete=False,
+            dir=upload_folder
+        )
         pdf.output(out_temp.name)
         out_temp.flush()
-        out_temp.close()
         
-        # Cleanup temporary files
-        for f in temp_files:
-            try:
-                if os.path.exists(f):
-                    os.remove(f)
-            except Exception:
-                logger.exception("Failed to delete tmp file %s", f)
+        logger.info("PDF generated successfully")
         
+        # Send file response
         return send_file(
             out_temp.name,
             as_attachment=True,
-            download_name='analysis_report.pdf',
+            download_name=secure_filename('analysis_report.pdf'),
             mimetype='application/pdf'
         )
         
     except Exception as e:
-        logger.exception("Error saving PDF")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Detailed error in save_pdf:")
+        return jsonify({'error': f'PDF generation failed: {str(e)}'}), 500
+        
+    finally:
+        # Cleanup temporary files
+        cleanup_files(temp_files)
+        if out_temp and os.path.exists(out_temp.name):
+            cleanup_files([out_temp.name])
 
 
 if __name__ == '__main__':
+    # Verify directory permissions
+    upload_folder = app.config.get('UPLOAD_FOLDER', '/tmp')
+    if not os.path.exists(upload_folder):
+        os.makedirs(upload_folder)
+    if not os.access(upload_folder, os.W_OK):
+        logger.error(f"No write permission for directory: {upload_folder}")
+    
+    logger.info(f"Starting Flask application with upload folder: {upload_folder}")
     app.run(debug=True, host='0.0.0.0', port=5000)
