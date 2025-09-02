@@ -159,49 +159,67 @@ def rgb_to_hsv_chroma_hue(r, g, b):
 def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chroma, corrected_value, 
                                  tvbn_limit, fish_mass, headspace, temp_c):
     """Calculate freshness parameters based on the original code"""
+    
     # pH calculation
-    ph_from_hue = (114.2 - corrected_hue) / 5.87
+    # --- 1. NEW pH Calculation based on provided Hue-pH correlation ---
+    ph_from_hue = 10.6 - (0.03 * corrected_hue)
     avg_ph = ph_from_hue
 
-    # Ammonia calculation
-    nh3_ppm_pred = corrected_chroma * 0.5 + 10
-    nh3_ppm_pred = max(0, min(100, nh3_ppm_pred))
+    # --- 2. Calculate Spoilage Rate and Total Shelf Life at current temp using Arrhenius ---
+    # Constants from our derived model
+    A = 5.35e13  # Pre-exponential factor (day⁻¹)
+    Ea = 77850   # Activation Energy (J/mol)
+    R = 8.314    # Gas Constant (J/mol·K)
 
+    # Convert temperature to Kelvin
+    temp_k = temp_c + 273.15
+
+    # Calculate the spoilage rate r(T) and total shelf life t(T)
+    r_T = A * math.exp(-Ea / (R * temp_k)) # Spoilage rate (day⁻¹)
+    t_T = 1 / r_T                          # Total shelf life (days) from H=150 to H=130
+
+    # --- 3. Calculate Remaining Shelf Life based on Current Hue ---
+    shelf_life = max(0, (corrected_hue - 130) / 20 * t_T)
+
+    # --- 4. Predict TVB-N based on Current Hue (New Linear Model) ---
+    # Equation: TVB-N_pred = slope * corrected_hue + intercept
+    #slope_tvbn = (30 - 15) / (130 - 150) # = 15 / (-20) = -0.75
+    # Solve for intercept (b): 15 = (-0.75)*150 + b -> b = 15 + 112.5 = 127.5
+    tvbn_pred = (-0.75) * corrected_hue + 127.5
+    # Ensure prediction is within realistic bounds
+    tvbn_pred = max(0, min(30, tvbn_pred))
+
+    # --- 5. (Optional) Keep your original NH3/Headspace calculation for limits ---
+    # This section is kept for compatibility but is no longer used for shelf life.
     # Calculate ammonia limit based on input parameters
-    R = 0.0821  # Gas constant (L·atm·K⁻¹·mol⁻¹)
     P = 1  # Pressure (atm)
     molecular_weight = 17.03  # NH₃
-    temp_k = temp_c + 273.15
-    molar_volume = (R * temp_k) / P
+    molar_volume = (R * temp_k) / P # Uses R from Arrhenius calculation above
 
-    # TVB-N calculation
+    # TVB-N calculation using the user-defined tvbn_limit
     tvbn_mg = (tvbn_limit * fish_mass) / 100
-    
+
     # Compute gaseous NH3 fraction (temperature/pH-dependent)
     total_nh3_mg = 0.6 * tvbn_mg  # Assuming that 60% of TVB-N is Ammonia
 
-    pKa = 0.09018 + (2729.92 / temp_k)  # Temperature-dependent pKa
-    NH3_ratio = 10 ** (ph_from_hue - pKa)  # [NH3]/[NH4+]
-    f_NH3 = NH3_ratio / (1 + NH3_ratio)  # Fraction of free NH3
-    gaseous_nh3_mg = f_NH3 * total_nh3_mg  # Free and gaseous ammonia
+    #pKa = 0.09018 + (2729.92 / temp_k)  # Temperature-dependent pKa
+    #NH3_ratio = 10 ** (ph_from_hue - pKa)  # [NH3]/[NH4+]
+    #f_NH3 = NH3_ratio / (1 + NH3_ratio)  # Fraction of free NH3
+    #gaseous_nh3_mg = f_NH3 * total_nh3_mg  # Free and gaseous ammonia
 
     # Fish volume and headspace
-    density_kg_per_m3 = 1080.0  # Average density of fish (kg/m3)
+    density_kg_per_m3 = 1080.0
     fish_volume_L = ((fish_mass / 1000) / density_kg_per_m3) * 1000
-    Actual_headspace = max(headspace - fish_volume_L, 0.001)  # Avoid division by zero
+    Actual_headspace = max(headspace - fish_volume_L, 0.001)
 
-    # Convert gaseous NH₃ to ppm
-    nh3_ppm_limit = (gaseous_nh3_mg * molar_volume) / (molecular_weight * Actual_headspace)
+    # Convert gaseous NH₃ to ppm (this is the safety limit)
+    nh3_ppm_limit = (total_nh3_mg * molar_volume) / (molecular_weight * Actual_headspace)
 
-    # Shelf life calculation
-    r_mg_per_kg_hr = 5.83  # Average ammonia production rate by fish
+    # --- 6. Empirical NH3 prediction from Chroma ---
+    nh3_ppm_pred = (total_nh3_mg * (tvbn_pred * 0.6)) / (molecular_weight * Actual_headspace)
+    nh3_ppm_pred = max(0, min(100, nh3_ppm_pred))
 
-    shelf_life = max(0, (nh3_ppm_limit - nh3_ppm_pred) / 
-                   (r_mg_per_kg_hr * (fish_mass / 1000) / Actual_headspace / 24))
-
-    # TVB-N prediction
-    tvbn_pred = max(0, min(100, ((nh3_ppm_pred * molecular_weight * Actual_headspace * 100) /
-                                (molar_volume * 0.60 * fish_mass))))
+    ########################################################################
 
     # Validate results
     warnings = []
@@ -326,7 +344,7 @@ def process_image():
                 'corrected_hue': f"Corrected Hue: {corrected_hue:.2f}°",
                 'ph': f"pH: {freshness_params['ph']:.2f} (±0.45)",
                 'tvbn': f"TVB-N: {freshness_params['tvbn_pred']:.2f} mg/100g (limit: {tvbn_limit:.2f} mg/100g)",
-                'ammonia': f"Ammonia: {freshness_params['nh3_ppm_pred']:.2f} ppm (limit: {freshness_params['nh3_ppm_limit']:.2f} ppm)",
+                'ammonia': f"Ammonia (NH₃ + NH₄⁺): {freshness_params['nh3_ppm_pred']:.2f} ppm (limit: {freshness_params['nh3_ppm_limit']:.2f} ppm)",
                 'shelf_life': f"Remaining Shelf Life: {freshness_params['shelf_life']:.2f} days",
                 'warnings': freshness_params['warnings']
             }
