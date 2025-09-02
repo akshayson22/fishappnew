@@ -346,7 +346,7 @@ def process_image():
                 'corrected_v': f"Corrected V (Value): {corrected_value:.2f}",
                 'corrected_chroma': f"Corrected Chroma: {corrected_chroma:.2f}",
                 'corrected_hue': f"Corrected Hue: {corrected_hue:.2f}°",
-                'ph': f"pH: {freshness_params['ph']:.2f} (±0.45)",
+                'ph': f"pH: {freshness_params['ph']:.2f}",
                 'tvbn': f"TVB-N: {freshness_params['tvbn_pred']:.2f} mg/100g (limit: {tvbn_limit:.2f} mg/100g)",
                 'ammonia': f"Ammonia: {freshness_params['nh3_ppm_pred']:.2f} ppm (limit: {freshness_params['nh3_ppm_limit']:.2f} ppm)",
                 'shelf_life': f"Remaining Shelf Life: {freshness_params['shelf_life']:.2f} days",
