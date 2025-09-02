@@ -202,21 +202,25 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     # Compute gaseous NH3 fraction (temperature/pH-dependent)
     total_nh3_mg = 0.6 * tvbn_mg  # Assuming that 60% of TVB-N is Ammonia
 
-    #pKa = 0.09018 + (2729.92 / temp_k)  # Temperature-dependent pKa
-    #NH3_ratio = 10 ** (ph_from_hue - pKa)  # [NH3]/[NH4+]
-    #f_NH3 = NH3_ratio / (1 + NH3_ratio)  # Fraction of free NH3
-    #gaseous_nh3_mg = f_NH3 * total_nh3_mg  # Free and gaseous ammonia
+    pKa = 0.09018 + (2729.92 / temp_k)  # Temperature-dependent pKa
+    NH3_ratio = 10 ** (ph_from_hue - pKa)  # [NH3]/[NH4+]
+    f_NH3 = NH3_ratio / (1 + NH3_ratio)  # Fraction of free NH3
+    gaseous_nh3_mg = f_NH3 * total_nh3_mg  # Free and gaseous ammonia
 
+    tvbn_mg_current = (tvbn_pred * fish_mass) / 100 # Predicted TVB-N mass
+    total_nh3_mg_current = 0.6 * tvbn_mg_current  # Assume 60% of TVB-N is Ammonia
+    gaseous_nh3_mg_current = f_NH3 * total_nh3_mg_current # Gaseous ammonia mass now
+                                     
     # Fish volume and headspace
     density_kg_per_m3 = 1080.0
     fish_volume_L = ((fish_mass / 1000) / density_kg_per_m3) * 1000
     Actual_headspace = max(headspace - fish_volume_L, 0.001)
 
     # Convert gaseous NH₃ to ppm (this is the safety limit)
-    nh3_ppm_limit = (total_nh3_mg * molar_volume) / (molecular_weight * Actual_headspace)
+    nh3_ppm_limit = (gaseous_nh3_mg * molar_volume) / (molecular_weight * Actual_headspace)
 
     # --- 6. Empirical NH3 prediction from Chroma ---
-    nh3_ppm_pred = (total_nh3_mg * (tvbn_pred * 0.6)) / (molecular_weight * Actual_headspace)
+    nh3_ppm_pred = (gaseous_nh3_mg_current * molar_volume) / (molecular_weight * Actual_headspace)
     nh3_ppm_pred = max(0, min(100, nh3_ppm_pred))
 
     ########################################################################
