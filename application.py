@@ -203,7 +203,7 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     total_nh3_mg = 0.6 * tvbn_mg  # Assuming that 60% of TVB-N is Ammonia
 
     pKa = 0.09018 + (2729.92 / temp_k)  # Temperature-dependent pKa
-    NH3_ratio = 10 ** (5.8 - pKa)  # [NH3]/[NH4+]
+    NH3_ratio = 10 ** (6.7 - pKa)  # [NH3]/[NH4+]
     f_NH3 = NH3_ratio / (1 + NH3_ratio)  # Fraction of free NH3
     gaseous_nh3_mg = f_NH3 * total_nh3_mg  # Free and gaseous ammonia
 
