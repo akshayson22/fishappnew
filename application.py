@@ -162,7 +162,7 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     
     # pH calculation
     # --- 1. NEW pH Calculation based on provided Hue-pH correlation ---
-    ph_from_hue = 10.6 - (0.03 * corrected_hue)
+    ph_from_hue = 12.55 - (0.045 * corrected_hue)
     avg_ph = ph_from_hue
 
     # --- 2. Calculate Spoilage Rate and Total Shelf Life at current temp using Arrhenius ---
@@ -203,12 +203,12 @@ def calculate_freshness_parameters(corrected_rgb, corrected_hue, corrected_chrom
     total_nh3_mg = 0.6 * tvbn_mg  # Assuming that 60% of TVB-N is Ammonia
 
     pKa = 0.09018 + (2729.92 / temp_k)  # Temperature-dependent pKa
-    NH3_ratio = 10 ** (ph_from_hue - pKa)  # [NH3]/[NH4+]
+    NH3_ratio = 10 ** (5.8 - pKa)  # [NH3]/[NH4+]
     f_NH3 = NH3_ratio / (1 + NH3_ratio)  # Fraction of free NH3
     gaseous_nh3_mg = f_NH3 * total_nh3_mg  # Free and gaseous ammonia
 
     tvbn_mg_current = (tvbn_pred * fish_mass) / 100 # Predicted TVB-N mass
-    NH3_ratio_current = 10 ** (6 - pKa)  # [NH3]/[NH4+]
+    NH3_ratio_current = 10 ** (ph_from_hue - pKa)  # [NH3]/[NH4+]
     f_NH3_current = NH3_ratio_current / (1 + NH3_ratio_current)  # Fraction of free NH3
     total_nh3_mg_current = 0.6 * tvbn_mg_current  # Assume 60% of TVB-N is Ammonia
     gaseous_nh3_mg_current = f_NH3_current * total_nh3_mg_current # Gaseous ammonia mass now
@@ -350,7 +350,7 @@ def process_image():
                 'corrected_hue': f"Corrected Hue: {corrected_hue:.2f}°",
                 'ph': f"pH: {freshness_params['ph']:.2f}",
                 'tvbn': f"TVB-N: {freshness_params['tvbn_pred']:.2f} mg/100g (limit: {tvbn_limit:.2f} mg/100g)",
-                'ammonia': f"Ammonia [NH3]/[NH4+]: {freshness_params['nh3_ppm_pred']:.2f} ppm (limit: {freshness_params['nh3_ppm_limit']:.2f} ppm)",
+                'ammonia': f"Ammonia (NH3 + NH4+): {freshness_params['nh3_ppm_pred']:.2f} ppm (limit: {freshness_params['nh3_ppm_limit']:.2f} ppm)",
                 'shelf_life': f"Remaining Shelf Life: {freshness_params['shelf_life']:.2f} days",
                 'warnings': freshness_params['warnings']
             }
