@@ -593,6 +593,10 @@ def save_pdf():
                     os.remove(f)
             except Exception:
                 logger.exception("Failed to delete tmp file %s", f)
+
+        # Clear the stored analysis data to prevent stale downloads
+        app.config['LAST_ANALYSIS'] = None
+        app.config['LAST_PARAMS'] = None
         
         return send_file(
             out_temp.name,
@@ -605,6 +609,12 @@ def save_pdf():
         logger.exception("Error saving PDF")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/clear_cache', methods=['POST'])
+def clear_cache():
+    """Endpoint to clear the stored analysis data."""
+    app.config['LAST_ANALYSIS'] = None
+    app.config['LAST_PARAMS'] = None
+    return jsonify({'message': 'Analysis data cleared successfully!'})
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
