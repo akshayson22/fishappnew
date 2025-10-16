@@ -2,7 +2,7 @@
 
 [![Heroku](https://img.shields.io/badge/Deployed-Heroku-blue)](https://fishfreshnessapp-dd83d72380b3.herokuapp.com/)
 
-A web app for analyzing fish freshness using image-based detection and colorimetric analysis. It predicts pH, TVB-N, ammonia concentration, and remaining shelf life, and generates detailed PDF reports.
+A web app for analyzing fish freshness using image-based detection and colorimetric analysis. It predicts pH, TVB-N, ammonia concentration, and remaining shelf life, and generates detailed PDF reports. The models running behind the code are partially imaginary and partially taken from literature. New models will be employed once all data is available from the NOVISHPAK Project: [https://novishpak.eu/](https://novishpak.eu/)
 
 ---
 
@@ -68,6 +68,7 @@ Open in browser: `http://127.0.0.1:5000/`
 
 * Images must contain exactly three blue-bordered regions.
 * Freshness parameters are based on colorimetric calibration and temperature.
+* Current models are partially imaginary and literature-based. New models will be updated from the NOVISHPAK Project once available.
 
 ---
 
