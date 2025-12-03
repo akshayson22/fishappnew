@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["gfortran", "gcc", "python3", "python3Packages.pip"]
+
+[phases.install]
+commands = [
+  "pip install --upgrade pip setuptools wheel",
+  "pip install -r requirements.txt"
+]
+
+[start]
+cmd = "python application.py"
